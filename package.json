@@ -1,0 +1,15 @@
+{
+  "name": "netscope",
+  "version": "1.0.0",
+  "description": "NetScope 网络示波台 — 本地网络延迟/丢包测试仪表盘(零依赖)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "stop": "node server.js stop"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "author": "ambi <ambi.vip@qq.com>",
+  "license": "MIT"
+}

@@ -1,0 +1,9 @@
+# 运行时产生的实例登记文件(勿提交)
+.netscope.pids
+
+# 系统与日志
+.DS_Store
+*.log
+
+# 依赖(本项目零依赖,正常不会有此目录)
+node_modules/

@@ -1,0 +1,1805 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NetScope · 网络示波台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23070b12'/%3E%3Cpath d='M4 18h6l3-9 4 16 3-7h8' stroke='%23ffb454' stroke-width='2.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+:root{
+  --bg:#070b12;
+  --panel:#0c141f;
+  --panel-2:#0a111a;
+  --screen:#04070c;
+  --line:#1b2a3d;
+  --line-soft:#141f2e;
+  --ink:#d9e5f2;
+  --ink-dim:#8ba3bf;
+  --ink-faint:#5a7089;
+  --amber:#ffb454;
+  --amber-dim:#c88a3e;
+  --cyan:#6cd9f7;
+  --cyan-dim:#4a9db8;
+  --red:#ff6b6b;
+  --green:#3ddc97;
+  --orange:#ff9757;
+  --mono:'IBM Plex Mono','SF Mono',ui-monospace,Menlo,Consolas,monospace;
+  --sans:'Space Grotesk','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:14px;
+  line-height:1.55;
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+}
+/* 背景层:Three.js 信号海 + 静态网格底纹 */
+#bg3d{position:fixed;inset:0;z-index:-2;width:100%;height:100%;display:block}
+.bg-grid{
+  position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    repeating-linear-gradient(0deg,rgba(140,170,220,.028) 0 1px,transparent 1px 52px),
+    repeating-linear-gradient(90deg,rgba(140,170,220,.028) 0 1px,transparent 1px 52px),
+    radial-gradient(1200px 600px at 70% -10%,rgba(108,217,247,.05),transparent 60%),
+    radial-gradient(900px 500px at 10% 110%,rgba(255,180,84,.04),transparent 60%);
+}
+.wrap{max-width:1280px;margin:0 auto;padding:20px clamp(14px,3vw,32px) 40px}
+
+/* ---------- 顶栏 ---------- */
+header{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:14px 2px 16px;border-bottom:1px solid var(--line-soft);
+  margin-bottom:16px;
+}
+.brand{display:flex;align-items:center;gap:12px}
+.brand-icon{position:relative;width:30px;height:30px;flex:none}
+.brand-icon svg{width:30px;height:30px;display:block}
+.brand-icon::after{
+  content:'';position:absolute;inset:-5px;border-radius:8px;
+  border:1px solid rgba(255,180,84,.35);opacity:0;
+}
+body.live .brand-icon::after{animation:ping-ring 1.6s ease-out infinite}
+@keyframes ping-ring{0%{transform:scale(.7);opacity:.8}70%{opacity:0}100%{transform:scale(1.25);opacity:0}}
+.brand h1{font-size:19px;font-weight:700;letter-spacing:.01em}
+.brand .sub{font-size:12px;color:var(--ink-faint);letter-spacing:.28em;font-family:var(--mono)}
+.head-right{margin-left:auto;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.env{font-family:var(--mono);font-size:11.5px;color:var(--ink-faint)}
+.pill{
+  display:inline-flex;align-items:center;gap:7px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;
+  padding:4px 11px;border:1px solid var(--line);border-radius:999px;color:var(--ink-dim);
+  background:rgba(255,255,255,.02);
+}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:var(--ink-faint)}
+.pill.running{color:var(--amber);border-color:rgba(255,180,84,.4)}
+.pill.running .dot{background:var(--amber);animation:blink 1.1s ease-in-out infinite}
+.pill.error{color:var(--red);border-color:rgba(255,107,107,.45)}
+.pill.error .dot{background:var(--red)}
+@keyframes blink{50%{opacity:.25}}
+
+/* ---------- 仪器面板基元 ---------- */
+.panel{
+  background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border:1px solid var(--line);
+  border-radius:6px;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025);
+}
+.panel-head{
+  display:flex;align-items:baseline;gap:10px;
+  padding:11px 14px;border-bottom:1px solid var(--line-soft);
+}
+.panel-head .ttl{font-size:13.5px;font-weight:600}
+.panel-head .mark{
+  font-family:var(--mono);font-size:10px;letter-spacing:.18em;
+  color:var(--amber-dim);text-transform:uppercase;
+}
+.panel-head .meta{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
+
+/* ---------- 控制条 ---------- */
+.control{padding:14px;display:flex;flex-direction:column;gap:12px;margin-bottom:16px}
+.ctl-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--ink-faint);text-transform:uppercase}
+.field input,.field select{
+  font-family:var(--mono);font-size:13px;color:var(--ink);
+  background:#080e17;border:1px solid var(--line);border-radius:4px;
+  padding:8px 10px;outline:none;min-width:0;
+  transition:border-color .15s;
+}
+.field input:focus,.field select:focus{border-color:var(--amber-dim)}
+.field input.invalid{border-color:var(--red)}
+.f-target{flex:1 1 240px}
+.f-target input{width:100%}
+.f-port{opacity:.45;pointer-events:none;transition:opacity .2s}
+.f-port.on{opacity:1;pointer-events:auto}
+.f-port input{width:76px}
+.field select{cursor:pointer}
+.seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.seg button{
+  font-family:var(--mono);font-size:12px;padding:8px 14px;cursor:pointer;
+  background:transparent;border:none;color:var(--ink-dim);
+}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button.active{background:rgba(255,180,84,.12);color:var(--amber)}
+.seg button:not(.active):hover{color:var(--ink)}
+.btn{
+  display:inline-flex;align-items:center;gap:7px;
+  font-family:var(--sans);font-size:13.5px;font-weight:600;
+  padding:9px 16px;border-radius:4px;cursor:pointer;
+  border:1px solid var(--line);background:rgba(255,255,255,.02);color:var(--ink);
+  transition:border-color .15s,background .15s,color .15s;
+}
+.btn svg{width:13px;height:13px;flex:none}
+.btn:hover:not(:disabled){border-color:var(--ink-faint)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-primary{
+  background:var(--amber);border-color:var(--amber);color:#241605;
+}
+.btn-primary:hover:not(:disabled){background:#ffc678;border-color:#ffc678}
+.btn-stop{background:rgba(255,107,107,.1);border-color:rgba(255,107,107,.55);color:var(--red)}
+.btn-stop:hover:not(:disabled){border-color:var(--red);background:rgba(255,107,107,.16)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto;align-items:center}
+.chip{
+  font-family:var(--mono);font-size:11px;color:var(--ink-dim);
+  border:1px dashed var(--line);border-radius:999px;background:transparent;
+  padding:3px 10px;cursor:pointer;transition:color .15s,border-color .15s;
+}
+.chip:hover{color:var(--cyan);border-color:var(--cyan-dim)}
+.btn-help{
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-dim);
+  border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.02);
+  padding:4px 12px;cursor:pointer;transition:color .15s,border-color .15s;
+}
+.btn-help:hover{color:var(--amber);border-color:var(--amber-dim)}
+/* 使用说明弹窗 */
+.help-mask{position:fixed;inset:0;z-index:60;background:rgba(2,5,9,.74);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:24px}
+.help-mask[hidden]{display:none}
+.help-modal{
+  width:min(720px,100%);max-height:min(84vh,780px);display:flex;flex-direction:column;
+  background:linear-gradient(180deg,var(--panel),var(--panel-2));
+  border:1px solid var(--line);border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.55);
+}
+.help-head{display:flex;align-items:center;gap:10px;padding:13px 18px;border-bottom:1px solid var(--line-soft)}
+.help-head .ttl{font-size:15px;font-weight:600}
+.help-head .mark{font-family:var(--mono);font-size:10px;letter-spacing:.18em;color:var(--amber-dim);text-transform:uppercase}
+.help-close{
+  margin-left:auto;background:transparent;border:1px solid var(--line);border-radius:4px;
+  color:var(--ink-dim);width:27px;height:27px;cursor:pointer;font-size:12px;flex:none;
+}
+.help-close:hover{color:var(--red);border-color:var(--red)}
+.help-body{overflow-y:auto;padding:4px 20px 26px;line-height:1.78;font-size:13.5px;position:relative}
+.help-body::after{
+  content:'▼ 可滚动查看更多';
+  position:sticky;left:0;bottom:-26px;display:block;
+  text-align:center;font-family:var(--mono);font-size:10px;letter-spacing:.2em;
+  color:var(--amber-dim);padding:8px 0 2px;
+  background:linear-gradient(180deg,transparent,var(--panel-2) 40%);
+  pointer-events:none;
+}
+.help-body.scrolled-end::after{content:'';background:none;padding:0}
+.help-body::-webkit-scrollbar{width:8px}
+.help-body::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+.help-body h3{font-size:13px;margin:16px 0 6px;color:var(--amber);font-weight:600}
+.help-body h3:first-child{margin-top:10px}
+.help-body p,.help-body li{color:var(--ink-dim)}
+.help-body b{color:var(--ink);font-weight:600}
+.help-body ul{padding-left:18px;margin:4px 0}
+.help-body code{font-family:var(--mono);font-size:12px;background:rgba(255,255,255,.05);padding:1px 5px;border-radius:3px;color:var(--cyan)}
+.help-body .tip{border-left:2px solid var(--amber-dim);padding:6px 12px;background:rgba(255,180,84,.06);border-radius:0 4px 4px 0;margin:8px 0}
+.help-foot{padding:10px 18px;border-top:1px solid var(--line-soft);font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
+
+/* ---------- 主区域 ---------- */
+.board{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;margin-bottom:14px}
+.rail{display:flex;flex-direction:column;gap:14px}
+
+/* 示波器屏幕 */
+.scope-frame{
+  position:relative;margin:12px;border-radius:4px;overflow:hidden;
+  background:var(--screen);
+  border:1px solid #12202f;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.015),inset 0 0 46px rgba(0,0,0,.55);
+}
+.scope-frame::after{ /* 扫描线纹理 */
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(160,200,255,.024) 0 1px,transparent 1px 3px);
+}
+#scopeCanvas{display:block;width:100%;height:348px}
+.scope-legend{
+  display:flex;gap:18px;flex-wrap:wrap;
+  padding:0 14px 12px;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
+}
+.scope-legend .sw{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+.scope-legend .sw.avg{height:0;border-top:2px dashed var(--ink-dim);width:14px}
+.scope-legend .sw.loss{color:var(--red);width:auto;height:auto;border:none}
+
+/* 读数列 */
+.readout{padding:14px 16px}
+.readout .big{display:flex;align-items:baseline;gap:8px;margin:2px 0 4px}
+.readout .big .v{
+  font-family:var(--mono);font-size:42px;font-weight:600;line-height:1.05;
+  font-variant-numeric:tabular-nums;color:var(--amber);
+}
+body.tcp .readout .big .v{color:var(--cyan)}
+.readout .big .u{font-family:var(--mono);font-size:14px;color:var(--ink-faint)}
+.readout .cap{font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);letter-spacing:.14em;text-transform:uppercase}
+.mini-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:1px;margin-top:12px;
+  background:var(--line-soft);border:1px solid var(--line-soft);border-radius:4px;overflow:hidden;
+}
+.mini{background:var(--panel-2);padding:9px 11px}
+.mini .k{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ink-faint);text-transform:uppercase}
+.mini .v{font-family:var(--mono);font-size:16.5px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:2px}
+.mini .v.loss-bad{color:var(--red)}
+.mini .v.loss-ok{color:var(--green)}
+.geo{
+  font-family:var(--mono);font-size:10.5px;color:var(--ink-faint);
+  margin-top:9px;padding-top:8px;border-top:1px dashed var(--line-soft);
+  line-height:1.7;min-height:16px;
+}
+.geo .ok-note{color:var(--green)}
+.geo-toggle{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-dim);cursor:pointer;user-select:none;margin-right:8px}
+.geo-toggle input{accent-color:var(--amber);cursor:pointer}
+.gauge-side .basis{color:var(--ink-faint)}
+.panel-actions{margin-left:auto;display:flex;gap:8px;align-items:center}
+.mini-btn{
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;
+  color:var(--ink-dim);background:transparent;border:1px solid var(--line);
+  border-radius:4px;padding:3px 9px;cursor:pointer;
+  transition:color .15s,border-color .15s;
+}
+.mini-btn:hover{color:var(--amber);border-color:var(--amber-dim)}
+/* 本机网络面板 */
+.net-cols{display:grid;grid-template-columns:1fr 1fr;gap:6px 28px;padding:13px 16px 8px}
+.net-group>.g-title{
+  font-family:var(--mono);font-size:10px;letter-spacing:.18em;
+  color:var(--amber-dim);text-transform:uppercase;margin-bottom:6px;
+  padding-bottom:6px;border-bottom:1px solid var(--line-soft);
+}
+.kv{display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:4.5px 0;border-bottom:1px dashed var(--line-soft)}
+.kv:last-child{border-bottom:none}
+.kv .k{font-family:var(--mono);font-size:11px;color:var(--ink-faint);flex:none}
+.kv .v{font-family:var(--mono);font-size:12px;color:var(--ink-dim);text-align:right;word-break:break-all;line-height:1.55}
+.kv .v.hl{color:var(--amber)}
+.kv .v .tag{
+  display:inline-block;font-size:10.5px;border-radius:3px;padding:0 6px;margin-left:6px;
+  background:rgba(255,180,84,.12);color:var(--amber);border:1px solid rgba(255,180,84,.3);
+}
+.kv .v .tag.no{background:transparent;color:var(--ink-faint);border-color:var(--line)}
+/* 带宽测试 */
+.speed-body{display:grid;grid-template-columns:290px 1fr;gap:16px;padding:14px 16px;align-items:stretch}
+.speed-main{display:flex;flex-direction:column;gap:8px;min-width:0}
+.speed-now{display:flex;align-items:baseline;gap:7px;font-variant-numeric:tabular-nums}
+.speed-now .v{font-family:var(--mono);font-size:40px;font-weight:600;line-height:1.05;color:var(--ink)}
+.speed-now.up .v{color:var(--cyan)}
+.speed-now.down .v{color:var(--amber)}
+.speed-now .u{font-family:var(--mono);font-size:13px;color:var(--ink-faint)}
+.speed-phase{font-family:var(--mono);font-size:11.5px;color:var(--ink-dim);min-height:17px}
+.speed-phase .sp{color:var(--amber)}
+.speed-bar{height:4px;border-radius:2px;background:var(--line-soft);overflow:hidden}
+.speed-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--amber),var(--cyan));transition:width .3s}
+.speed-chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.schip{
+  flex:1;min-width:80px;background:var(--panel-2);border:1px solid var(--line-soft);
+  border-radius:4px;padding:7px 10px;
+}
+.schip .k{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--ink-faint)}
+.schip .v{font-family:var(--mono);font-size:16px;font-weight:500;margin-top:2px;font-variant-numeric:tabular-nums}
+.schip .v.dl{color:var(--amber)}
+.schip .v.ul{color:var(--cyan)}
+.speed-note{font-family:var(--mono);font-size:10px;color:var(--ink-faint);line-height:1.6;margin-top:2px}
+#speedCanvas{display:block;width:100%;height:150px;background:var(--screen);border:1px solid #12202f;border-radius:4px}
+@media (max-width:1020px){.speed-body{grid-template-columns:1fr}}
+/* 广告位 */
+.ad-banner{
+  margin-top:14px;display:flex;align-items:center;gap:14px;
+  padding:13px 16px;border:1px solid rgba(255,180,84,.26);border-radius:6px;
+  background:linear-gradient(90deg,rgba(255,180,84,.09),rgba(255,180,84,.03) 55%,transparent);
+  text-decoration:none;color:var(--ink);
+  transition:border-color .15s,background .15s;
+}
+.ad-banner:hover{border-color:rgba(255,180,84,.6);background:linear-gradient(90deg,rgba(255,180,84,.14),rgba(255,180,84,.05) 55%,transparent)}
+.ad-mark{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;color:var(--amber-dim);
+  border:1px solid rgba(255,180,84,.35);border-radius:3px;padding:2px 6px;flex:none;
+}
+.ad-body{min-width:0}
+.ad-body b{font-size:14.5px;display:block;line-height:1.4}
+.ad-body .ad-sub{font-size:12px;color:var(--ink-dim)}
+.ad-cta{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--amber);flex:none}
+.ad-cta svg{width:14px;height:14px}
+@media (max-width:720px){
+  .net-cols{grid-template-columns:1fr}
+  .ad-body .ad-sub{display:none}
+}
+
+/* 质量仪表 */
+.gauge-panel{padding:14px 16px;display:flex;align-items:center;gap:14px}
+.gauge-wrap{position:relative;width:118px;height:118px;flex:none}
+.gauge-wrap svg{width:118px;height:118px;transform:rotate(-90deg)}
+.gauge-center{
+  position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+}
+.gauge-center .score{font-family:var(--mono);font-size:27px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.gauge-center .of{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);margin-top:2px}
+.gauge-side{display:flex;flex-direction:column;gap:5px;min-width:0}
+.gauge-side .q{font-size:17px;font-weight:700}
+.gauge-side .d{font-size:12px;color:var(--ink-dim);line-height:1.5}
+
+/* 下部:分布 + 日志 */
+.lower{display:grid;grid-template-columns:5fr 7fr;gap:14px}
+#histCanvas{display:block;width:100%;height:170px}
+.log-scroll{max-height:236px;overflow-y:auto;margin:10px 12px 12px;border:1px solid var(--line-soft);border-radius:4px}
+.log-scroll::-webkit-scrollbar{width:8px}
+.log-scroll::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11.5px}
+thead th{
+  position:sticky;top:0;background:var(--panel);z-index:1;
+  text-align:left;font-weight:500;color:var(--ink-faint);
+  font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  padding:7px 10px;border-bottom:1px solid var(--line-soft);
+}
+tbody td{padding:5.5px 10px;border-bottom:1px solid rgba(20,31,46,.55);color:var(--ink-dim);white-space:nowrap}
+tbody tr:first-child td{background:rgba(255,180,84,.04)}
+body.tcp tbody tr:first-child td{background:rgba(108,217,247,.05)}
+tbody td.lat{color:var(--amber);font-variant-numeric:tabular-nums}
+body.tcp tbody td.lat{color:var(--cyan)}
+tbody tr.fail td{color:var(--ink-faint)}
+tbody tr.fail td.st{color:var(--red)}
+.log-empty{padding:26px 14px;text-align:center;color:var(--ink-faint);font-size:12px;font-family:var(--mono)}
+
+footer{
+  margin-top:18px;padding-top:14px;border-top:1px solid var(--line-soft);
+  font-size:12px;color:var(--ink-faint);line-height:1.7;
+}
+footer code{font-family:var(--mono);font-size:11px;color:var(--ink-dim);background:rgba(255,255,255,.03);padding:1px 5px;border-radius:3px}
+.foot-author{
+  margin-top:12px;padding-top:10px;border-top:1px dashed var(--line-soft);
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:11.5px;color:var(--ink-faint);
+}
+.foot-author b{color:var(--amber);font-weight:600;letter-spacing:.04em}
+.foot-author .sep{color:var(--line)}
+.foot-author a{color:var(--cyan);text-decoration:none}
+.foot-author a:hover{color:var(--cyan);text-decoration:underline}
+.foot-author .license{color:var(--ink-dim)}
+
+/* Toast */
+#toasts{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:50;display:flex;flex-direction:column;gap:8px;align-items:center}
+.toast{
+  font-size:13px;padding:9px 16px;border-radius:5px;
+  background:#131e2d;border:1px solid #2a3d58;color:var(--ink);
+  box-shadow:0 6px 24px rgba(0,0,0,.4);animation:toast-in .2s ease-out;
+}
+.toast.err{border-color:rgba(255,107,107,.5);color:#ffc4c4}
+@keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+
+@media (max-width:1020px){
+  .board{grid-template-columns:1fr}
+  .lower{grid-template-columns:1fr}
+  .chips{margin-left:0}
+  #scopeCanvas{height:280px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<canvas id="bg3d" aria-hidden="true"></canvas>
+<div class="bg-grid" aria-hidden="true"></div>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <div class="brand-icon" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none"><path d="M3 19h6l3-10 4 17 3-8h10" stroke="#ffb454" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div>
+        <h1>NetScope</h1>
+        <div class="sub">网络示波台</div>
+      </div>
+    </div>
+    <div class="head-right">
+      <span class="env" id="envInfo">环境读取中…</span>
+      <button class="btn-help" id="btnHelp" type="button">? 使用说明</button>
+      <span class="pill" id="statusPill"><span class="dot"></span><span id="statusText">就绪</span></span>
+    </div>
+  </header>
+
+  <!-- 控制台 -->
+  <section class="panel control" aria-label="测试控制">
+    <div class="ctl-row">
+      <div class="field f-target">
+        <label for="targetInput">目标 · IP 或域名</label>
+        <input id="targetInput" type="text" placeholder="例如 1.1.1.1 或 example.com" spellcheck="false" autocomplete="off">
+      </div>
+      <div class="field">
+        <label>探测方式</label>
+        <div class="seg" role="group" aria-label="探测方式">
+          <button type="button" id="modeIcmp" class="active">ICMP 回显</button>
+          <button type="button" id="modeTcp">TCP 握手</button>
+        </div>
+      </div>
+      <div class="field f-port" id="portField">
+        <label for="portInput">端口</label>
+        <input id="portInput" type="number" min="1" max="65535" value="443" style="width:76px">
+      </div>
+      <div class="field">
+        <label for="intervalSel">间隔</label>
+        <select id="intervalSel">
+          <option value="200">200 ms</option>
+          <option value="500">500 ms</option>
+          <option value="1000" selected>1 s</option>
+          <option value="2000">2 s</option>
+          <option value="5000">5 s</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="timeoutSel">超时</label>
+        <select id="timeoutSel">
+          <option value="1000">1 s</option>
+          <option value="2000" selected>2 s</option>
+          <option value="3000">3 s</option>
+          <option value="5000">5 s</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="durationSel">持续时长</label>
+        <select id="durationSel">
+          <option value="60" selected>1 分钟</option>
+          <option value="300">5 分钟</option>
+          <option value="600">10 分钟</option>
+          <option value="1800">30 分钟</option>
+          <option value="0">不限时</option>
+        </select>
+      </div>
+    </div>
+    <div class="ctl-row">
+      <button class="btn btn-primary" id="btnSingle">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg>单次测试
+      </button>
+      <button class="btn" id="btnRun">
+        <svg viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="4" height="10" rx="1"/><rect x="9" y="3" width="4" height="10" rx="1"/></svg>
+        <span id="btnRunText">开始连续测试</span>
+      </button>
+      <button class="btn" id="btnClear">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.8 9h6.4l.8-9"/></svg>清空
+      </button>
+      <button class="btn" id="btnCsv">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2v8m0 0 3-3M8 10 5 7M2.5 12.5v2h11v-2"/></svg>CSV
+      </button>
+      <button class="btn" id="btnJson">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2v8m0 0 3-3M8 10 5 7M2.5 12.5v2h11v-2"/></svg>JSON
+      </button>
+      <div class="chips" id="chips">
+        <label class="geo-toggle" title="识别目标与出口 IP 的大致归属地,按物理距离评估延迟;关闭后采用通用基准">
+          <input type="checkbox" id="geoToggle" checked>归属地识别
+        </label>
+        <button class="chip" data-host="1.1.1.1">1.1.1.1</button>
+        <button class="chip" data-host="8.8.8.8">8.8.8.8</button>
+        <button class="chip" data-host="223.5.5.5">223.5.5.5</button>
+        <button class="chip" data-host="127.0.0.1">127.0.0.1</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 示波屏 + 读数 -->
+  <div class="board">
+    <section class="panel" aria-label="延迟波形">
+      <div class="panel-head">
+        <span class="mark">CH1</span>
+        <span class="ttl">延迟波形</span>
+        <span class="meta" id="scopeMeta">等待触发</span>
+      </div>
+      <div class="scope-frame">
+        <canvas id="scopeCanvas"></canvas>
+      </div>
+      <div class="scope-legend" id="scopeLegend">
+        <span><span class="sw" style="background:var(--amber)"></span>ICMP 往返延迟</span>
+        <span><span class="sw avg"></span>平均值</span>
+        <span class="loss"><span style="color:var(--red)">✕</span> 丢包(超时/不可达)</span>
+      </div>
+    </section>
+
+    <aside class="rail">
+      <section class="panel readout" aria-label="当前读数">
+        <div class="cap" id="curCap">当前延迟</div>
+        <div class="big"><span class="v" id="curLat">—</span><span class="u" id="curUnit"></span></div>
+        <div class="cap" id="curTarget" style="letter-spacing:.04em;text-transform:none;color:var(--ink-dim)">未设定目标</div>
+        <div class="geo" id="geoLine"></div>
+        <div class="mini-grid">
+          <div class="mini"><div class="k">平均 avg</div><div class="v" id="stAvg">—</div></div>
+          <div class="mini"><div class="k">最小 min</div><div class="v" id="stMin">—</div></div>
+          <div class="mini"><div class="k">最大 max</div><div class="v" id="stMax">—</div></div>
+          <div class="mini"><div class="k">抖动 jitter</div><div class="v" id="stJit">—</div></div>
+          <div class="mini"><div class="k">P95</div><div class="v" id="stP95">—</div></div>
+          <div class="mini"><div class="k">丢包率 loss</div><div class="v" id="stLoss">—</div></div>
+        </div>
+      </section>
+
+      <section class="panel gauge-panel" aria-label="链路质量">
+        <div class="gauge-wrap">
+          <svg viewBox="0 0 118 118" aria-hidden="true">
+            <circle cx="59" cy="59" r="50" fill="none" stroke="#182637" stroke-width="7"/>
+            <circle id="gaugeArc" cx="59" cy="59" r="50" fill="none" stroke="#3ddc97" stroke-width="7"
+                    stroke-linecap="round" stroke-dasharray="314.16" stroke-dashoffset="314.16"/>
+          </svg>
+          <div class="gauge-center">
+            <div class="score" id="gaugeScore">—</div>
+            <div class="of">/ 100</div>
+          </div>
+        </div>
+        <div class="gauge-side">
+          <div class="q" id="gaugeLabel">链路质量</div>
+          <div class="d" id="gaugeDesc">开始测试后,综合延迟、丢包与抖动给出评分。</div>
+          <div class="d" id="gaugeCount" style="color:var(--ink-faint)"></div>
+          <div class="d basis" id="gaugeBasis" style="color:var(--ink-faint)"></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <!-- 带宽测试 -->
+  <section class="panel" style="margin-bottom:14px" aria-label="带宽测试">
+    <div class="panel-head">
+      <span class="mark">SPEED</span>
+      <span class="ttl">带宽测试</span>
+      <div class="panel-actions">
+        <button class="mini-btn" id="btnSpeed">开始测速</button>
+      </div>
+    </div>
+    <div class="speed-body">
+      <div class="speed-main">
+        <div class="speed-now" id="speedNow">
+          <span class="v" id="speedVal">—</span><span class="u">Mbps</span>
+        </div>
+        <div class="speed-phase" id="speedPhase">点击「开始测速」,约 15 秒完成</div>
+        <div class="speed-bar"><i id="speedBarFill"></i></div>
+        <div class="speed-chips">
+          <div class="schip"><div class="k">↓ 下载</div><div class="v dl" id="spDl">—</div></div>
+          <div class="schip"><div class="k">↑ 上传</div><div class="v ul" id="spUl">—</div></div>
+          <div class="schip"><div class="k">延迟 avg</div><div class="v" id="spPing">—</div></div>
+        </div>
+        <div class="speed-note">经 Cloudflare 边缘节点测量 · 约消耗 60–100 MB 流量 · 开启代理时测得的是代理链路带宽</div>
+      </div>
+      <canvas id="speedCanvas"></canvas>
+    </div>
+  </section>
+
+  <!-- 本机网络环境 -->
+  <section class="panel" style="margin-bottom:14px" aria-label="本机网络环境">
+    <div class="panel-head">
+      <span class="mark">LOCAL</span>
+      <span class="ttl">本机网络环境</span>
+      <div class="panel-actions">
+        <button class="mini-btn" id="btnNetRefresh">刷新</button>
+        <button class="mini-btn" id="btnNetExport">导出 JSON</button>
+      </div>
+    </div>
+    <div class="net-cols">
+      <div class="net-group">
+        <div class="g-title">出口网络 · WAN</div>
+        <div id="netExit"><div class="kv"><span class="k">状态</span><span class="v">识别中…</span></div></div>
+      </div>
+      <div class="net-group">
+        <div class="g-title">本机环境 · HOST</div>
+        <div id="netLocal"><div class="kv"><span class="k">状态</span><span class="v">读取中…</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 分布 + 日志 -->
+  <div class="lower">
+    <section class="panel" aria-label="延迟分布">
+      <div class="panel-head">
+        <span class="mark">HIST</span>
+        <span class="ttl">延迟分布</span>
+        <span class="meta" id="histMeta">—</span>
+      </div>
+      <canvas id="histCanvas"></canvas>
+    </section>
+
+    <section class="panel" aria-label="包序列日志">
+      <div class="panel-head">
+        <span class="mark">LOG</span>
+        <span class="ttl">包序列日志</span>
+        <span class="meta" id="logCount">0 包</span>
+      </div>
+      <div class="log-scroll" id="logScroll">
+        <table>
+          <thead><tr><th>#</th><th>时间</th><th>延迟</th><th>TTL</th><th>状态</th></tr></thead>
+          <tbody id="logBody"></tbody>
+        </table>
+        <div class="log-empty" id="logEmpty">尚无数据。输入目标后点击「单次测试」。</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- 广告位 -->
+  <a class="ad-banner" href="https://sub.ambi.vip/" target="_blank" rel="noopener noreferrer">
+    <span class="ad-mark">推广</span>
+    <span class="ad-body">
+      <b>AI 中转站 · sub.ambi.vip</b>
+      <span class="ad-sub">稳定高速的 AI API 中转服务,聚合主流大模型接口,开箱即用</span>
+    </span>
+    <span class="ad-cta">立即前往
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10m0 0L9 4m4 4-4 4"/></svg>
+    </span>
+  </a>
+
+  <footer>
+    <b>ICMP 回显</b>:调用本机系统 <code>ping</code>,测得真实网络层往返延迟与 TTL,目标需响应 ICMP。<br>
+    <b>TCP 握手</b>:测量本机与目标端口的 TCP 连接建立耗时,适合禁 ping 但有开放端口的服务器(如 443/80)。<br>
+    全部探测由页面所在的本地环境发起,服务仅监听 <code>127.0.0.1</code>,不会上报任何数据。<br>
+    「归属地识别」开启时会经 <code>ip-api.com</code> 查询目标与出口 IP 的大致位置,用于按物理距离评估延迟(跨洋 200ms 属正常,不再误判为线路差);关闭后完全离线,采用通用基准。
+    <div class="foot-author">
+      <span>作者 <b>ambi</b></span>
+      <span class="sep">|</span>
+      <span>QQ 1277518148</span>
+      <span class="sep">|</span>
+      <a href="mailto:ambi.vip@qq.com">ambi.vip@qq.com</a>
+      <span class="sep">|</span>
+      <span class="license">Released under the MIT License</span>
+    </div>
+  </footer>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+
+<!-- 使用说明弹窗 -->
+<div class="help-mask" id="helpMask" hidden>
+  <div class="help-modal" role="dialog" aria-modal="true" aria-label="使用说明">
+    <div class="help-head">
+      <span class="mark">HELP</span>
+      <span class="ttl">使用说明</span>
+      <button class="help-close" id="btnHelpClose" type="button" aria-label="关闭">✕</button>
+    </div>
+    <div class="help-body">
+      <h3>快速上手</h3>
+      <ul>
+        <li>在「目标」输入 <b>IP 或域名</b>(如 <code>1.1.1.1</code>),点「单次测试」快速看一眼,或「开始连续测试」持续监测;</li>
+        <li>波形图实时绘制每个包的往返延迟,红色 <b style="color:var(--red)">✕</b> 表示丢包(超时/不可达),虚线为平均值;</li>
+        <li>「持续时长」默认 <b>1 分钟</b>,到时自动停止并弹出摘要;也可随时手动「停止」。</li>
+      </ul>
+      <h3>探测方式怎么选</h3>
+      <ul>
+        <li><b>ICMP 回显</b>(默认):调用系统 ping,测真实网络层往返延迟与 TTL,适用于绝大多数目标;</li>
+        <li><b>TCP 握手</b>:目标禁止 ping 但有开放端口时使用(网站填 443 或 80)。ICMP 全部超时而目标明明在线 → 换它试试。</li>
+      </ul>
+      <h3>评分是"距离感知"的</h3>
+      <p>系统会识别目标归属地(目标下方那行,含国旗与距离),按<b>该距离的正常延迟</b>作为基准:</p>
+      <ul>
+        <li>测美国 IP 得到 200–300ms → <b>跨洋正常水平</b>,不会被误判为线路差;</li>
+        <li>测同城 IP 得到 200ms → 才会如实判「较差」。</li>
+      </ul>
+      <div class="tip">抖动 = 相邻包延迟波动,越小越稳(游戏/语音最在意);P95 = 95% 的包都快于该值;丢包率理想为 0%。</div>
+      <h3>带宽测试</h3>
+      <ul>
+        <li>点「开始测速」约 15–30 秒,测下载/上传带宽与延迟,可中途停止;</li>
+        <li>约消耗 60–100 MB 流量,手机热点用户请留意;开代理时测得的是代理链路带宽。</li>
+      </ul>
+      <h3>本机网络与导出</h3>
+      <ul>
+        <li>「本机网络环境」面板展示你的出口 IP、运营商、ASN、位置与内网网卡,可刷新、可导出 JSON;</li>
+        <li>测试数据可导出 <b>CSV</b>(Excel 可开)或 <b>JSON</b>(含统计汇总)。</li>
+      </ul>
+      <h3>隐私</h3>
+      <ul>
+        <li>ICMP / TCP 探测<b>全部在本机执行</b>,不经过任何第三方;</li>
+        <li>「归属地识别」开关开启时,仅将目标 IP 与出口 IP 交由 ip-api.com 查询大致位置;关闭后完全离线(改用通用基准);</li>
+        <li>服务只监听 <code>127.0.0.1</code>,局域网其他设备无法访问。</li>
+      </ul>
+      <h3>页面打不开了 / 服务未连接?</h3>
+      <p>本页面需由本地服务提供:双击项目里的 <code>start.command</code>(macOS)或 <code>start.bat</code>(Windows),或运行 <code>node server.js</code> 后访问 <code>http://127.0.0.1:8899</code>。更详细的说明见项目内《docs/使用说明书.md》。</p>
+    </div>
+    <div class="help-foot">NetScope · 作者 ambi · QQ 1277518148 · ambi.vip@qq.com · MIT License</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ============================== 基础工具 ============================== */
+const $ = (id) => document.getElementById(id);
+const RM = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const HOST_RE = /^(?=.{1,253}$)[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
+const MODES = {
+  icmp: { name: 'ICMP', color: '#ffb454', colorDim: 'rgba(255,180,84,', label: 'ICMP 回显' },
+  tcp:  { name: 'TCP',  color: '#6cd9f7', colorDim: 'rgba(108,217,247,', label: 'TCP 握手' },
+};
+
+function toast(msg, isErr) {
+  const box = $('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast' + (isErr ? ' err' : '');
+  el.textContent = msg;
+  box.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity .3s'; }, 3200);
+  setTimeout(() => el.remove(), 3600);
+}
+
+function fmtMs(v) {
+  if (v == null) return '—';
+  return v >= 100 ? Math.round(v).toString() : (Math.round(v * 10) / 10).toString();
+}
+function niceCeil(v) {
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 8, 10]) if (m * p >= v) return m * p;
+  return 10 * p;
+}
+function fmtTime(ts) {
+  return new Date(ts).toLocaleTimeString('zh-CN', { hour12: false });
+}
+const ERROR_TEXT = {
+  timeout: '超时', unreachable: '不可达', dns: '域名解析失败',
+  'no reply': '无响应', network: '请求失败', ECONNREFUSED: '端口未开放',
+};
+
+/* ---------- 归属地 / 距离基准 ---------- */
+function flagOf(cc) {
+  if (!cc || cc.length !== 2) return '';
+  try {
+    return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 127397 + c.charCodeAt(0)));
+  } catch (e) { return ''; }
+}
+function haversineKm(la1, lo1, la2, lo2) {
+  const R = 6371, rad = (x) => x * Math.PI / 180;
+  const dLa = rad(la2 - la1), dLo = rad(lo2 - lo1);
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(rad(la1)) * Math.cos(rad(la2)) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+/* 出口位置未知时的区域粗估:按浏览器时区判断用户是否在中国大陆 */
+function regionalExpect(t) {
+  const cc = (t.countryCode || '').toUpperCase();
+  const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone || '');
+  const userInCN = /Asia\/(Shanghai|Urumqi|Chongqing|Harbin)/i.test(tz);
+  if (!userInCN || !cc) return { basis: 'generic', ms: 80, km: null, note: '通用基准' };
+  const NEAR = ['HK', 'MO', 'TW', 'JP', 'KR', 'SG', 'MY', 'VN', 'TH', 'PH', 'MN', 'KP'];
+  if (cc === 'CN') return { basis: 'region', ms: 25, km: null, note: '国内基准(区域估)' };
+  if (NEAR.includes(cc)) return { basis: 'region', ms: 90, km: null, note: '周边亚洲基准(区域估)' };
+  return { basis: 'region', ms: 180, km: null, note: '跨洲基准(区域估)' };
+}
+
+/* ============================== 状态 ============================== */
+const S = {
+  samples: [],       // {seq, ts, ok, rtt, ttl, error, mode}
+  seq: 0,
+  running: false,
+  inFlight: false,
+  timer: null,
+  tickTimer: null,
+  deadline: 0,       // 0 = 不限时
+  duration: 60,      // 秒
+  host: '', mode: 'icmp', port: 443, interval: 1000, timeout: 2000,
+  session: null,     // {host, mode, port, ts0}
+  lastArrive: 0,
+  needRedraw: true,
+  errToastShown: false,
+  geo: { target: null, self: null },
+  expect: { basis: 'generic', ms: 80, km: null, note: '通用基准' },
+};
+const TIMELINE_N = 180, MAX_SAMPLES = 4000, MAX_LOG = 300;
+
+/* ============================== 画布适配 ============================== */
+function fitCanvas(c) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = c.clientWidth, h = c.clientHeight;
+  const W = Math.round(w * dpr), H = Math.round(h * dpr);
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const ctx = c.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w, h };
+}
+
+/* ============================== 示波屏(主图) ============================== */
+function drawScope() {
+  const c = $('scopeCanvas');
+  const { ctx, w, h } = fitCanvas(c);
+  ctx.clearRect(0, 0, w, h);
+  const M = MODES[S.mode];
+
+  const L = 50, R = 12, T = 12, B = 22;
+  const pw = w - L - R, ph = h - T - B;
+
+  /* 空状态:静默刻度屏 + 扫描线 */
+  if (!S.samples.length) {
+    ctx.strokeStyle = 'rgba(120,160,210,.07)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 5; i++) {
+      const y = T + (ph * i) / 5;
+      ctx.beginPath(); ctx.moveTo(L, y + .5); ctx.lineTo(w - R, y + .5); ctx.stroke();
+    }
+    for (let i = 0; i <= 8; i++) {
+      const x = L + (pw * i) / 8;
+      ctx.beginPath(); ctx.moveTo(x + .5, T); ctx.lineTo(x + .5, T + ph); ctx.stroke();
+    }
+    if (!RM) {
+      const t = (performance.now() / 1700) % 1;
+      const x = L + pw * t;
+      const g = ctx.createLinearGradient(x - 90, 0, x, 0);
+      g.addColorStop(0, 'rgba(255,180,84,0)');
+      g.addColorStop(1, 'rgba(255,180,84,.16)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 90, T, 90, ph);
+      ctx.fillStyle = 'rgba(255,180,84,.5)';
+      ctx.fillRect(x, T, 1.5, ph);
+    }
+    ctx.fillStyle = 'rgba(139,163,191,.75)';
+    ctx.font = '12px "IBM Plex Mono",monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('输入目标 IP,点击「单次测试」或「开始连续测试」', w / 2, h / 2 - 4);
+    ctx.fillStyle = 'rgba(90,112,137,.8)';
+    ctx.font = '10.5px "IBM Plex Mono",monospace';
+    ctx.fillText('waiting for trigger', w / 2, h / 2 + 16);
+    return;
+  }
+
+  const data = S.samples.slice(-TIMELINE_N);
+  const oks = data.filter(d => d.ok);
+  const maxLat = oks.length ? Math.max(...oks.map(d => d.rtt)) : 0;
+  const maxV = niceCeil(Math.max(10, maxLat * 1.12));
+
+  const X = (i) => (data.length === 1 ? L + pw / 2 : L + (pw * i) / (data.length - 1));
+  const Y = (v) => T + ph * (1 - Math.min(v, maxV) / maxV);
+
+  /* 刻度网格 */
+  ctx.font = '10px "IBM Plex Mono",monospace';
+  for (let i = 0; i <= 5; i++) {
+    const v = (maxV * i) / 5, y = T + (ph * (5 - i)) / 5;
+    ctx.strokeStyle = i === 0 ? 'rgba(120,160,210,.16)' : 'rgba(120,160,210,.07)';
+    ctx.beginPath(); ctx.moveTo(L, Math.round(y) + .5); ctx.lineTo(w - R, Math.round(y) + .5); ctx.stroke();
+    ctx.fillStyle = 'rgba(90,112,137,.9)';
+    ctx.textAlign = 'right';
+    ctx.fillText(fmtMs(v), L - 7, y + 3);
+  }
+  ctx.textAlign = 'left';
+  ctx.fillText('ms', 6, T + 8);
+  const nV = 8;
+  for (let i = 1; i < nV; i++) {
+    const x = Math.round(L + (pw * i) / nV) + .5;
+    ctx.strokeStyle = 'rgba(120,160,210,.045)';
+    ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + ph); ctx.stroke();
+  }
+
+  /* 平均线 */
+  const avg = oks.length ? oks.reduce((a, d) => a + d.rtt, 0) / oks.length : null;
+  if (avg != null && oks.length > 1) {
+    const y = Math.round(Y(avg)) + .5;
+    ctx.save();
+    ctx.setLineDash([4, 4]);
+    ctx.strokeStyle = 'rgba(139,163,191,.45)';
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(w - R, y); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = 'rgba(139,163,191,.8)';
+    ctx.textAlign = 'right';
+    ctx.fillText('avg ' + fmtMs(avg), w - R - 2, y - 4);
+  }
+
+  /* 波形(按连续成功段绘制) */
+  const yBase = T + ph;
+  const strokeG = ctx.createLinearGradient(L, 0, w - R, 0);
+  strokeG.addColorStop(0, M.colorDim + '.25)');
+  strokeG.addColorStop(.12, M.colorDim + '.95)');
+  strokeG.addColorStop(1, M.color);
+
+  let seg = [];
+  const flushSeg = () => {
+    if (seg.length === 0) return;
+    /* 面积 */
+    const fillG = ctx.createLinearGradient(0, T, 0, yBase);
+    fillG.addColorStop(0, M.colorDim + '.20)');
+    fillG.addColorStop(1, M.colorDim + '0)');
+    ctx.beginPath();
+    seg.forEach((p, k) => (k === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.lineTo(seg[seg.length - 1].x, yBase);
+    ctx.lineTo(seg[0].x, yBase);
+    ctx.closePath();
+    ctx.fillStyle = fillG;
+    ctx.fill();
+    /* 轨迹 */
+    ctx.save();
+    ctx.strokeStyle = strokeG;
+    ctx.lineWidth = 1.8;
+    ctx.shadowColor = M.colorDim + '.55)';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    seg.forEach((p, k) => (k === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+    ctx.stroke();
+    ctx.restore();
+    seg = [];
+  };
+
+  data.forEach((d, i) => {
+    if (d.ok) seg.push({ x: X(i), y: Y(d.rtt) });
+    else flushSeg();
+  });
+  flushSeg();
+
+  /* 数据点 + 丢包标记 */
+  const showDots = data.length <= 130;
+  data.forEach((d, i) => {
+    const x = X(i);
+    if (d.ok) {
+      if (!showDots) return;
+      ctx.beginPath();
+      ctx.arc(x, Y(d.rtt), 2.2, 0, Math.PI * 2);
+      ctx.fillStyle = M.color;
+      ctx.fill();
+    } else {
+      const y = yBase - 8;
+      ctx.strokeStyle = 'rgba(255,107,107,.95)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(x - 3.2, y - 3.2); ctx.lineTo(x + 3.2, y + 3.2);
+      ctx.moveTo(x + 3.2, y - 3.2); ctx.lineTo(x - 3.2, y + 3.2);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,107,107,.28)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x + .5, y); ctx.lineTo(x + .5, yBase); ctx.stroke();
+    }
+  });
+
+  /* 最新点触发脉冲 */
+  if (!RM && oks.length) {
+    const dt = performance.now() - S.lastArrive;
+    if (dt < 800) {
+      const t = dt / 800;
+      const last = data.length - 1;
+      const d = data[last];
+      if (d && d.ok) {
+        const x = X(last), y = Y(d.rtt);
+        ctx.beginPath();
+        ctx.arc(x, y, 4 + 15 * t, 0, Math.PI * 2);
+        ctx.strokeStyle = M.colorDim + (0.7 * (1 - t)).toFixed(3) + ')';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    }
+  }
+
+  /* 时间轴标注 */
+  const dur = Math.max(0, (data[data.length - 1].ts - data[0].ts) / 1000);
+  ctx.fillStyle = 'rgba(90,112,137,.9)';
+  ctx.font = '10px "IBM Plex Mono",monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText(dur >= 1 ? '-' + fmtMs(dur) + ' s' : '', L, h - 7);
+  ctx.textAlign = 'right';
+  ctx.fillText('现在', w - R, h - 7);
+
+  /* 会话信息 */
+  const lost = data.filter(d => !d.ok).length;
+  $('scopeMeta').textContent =
+    `${S.session ? S.session.host : ''} · ${M.name} · 窗口 ${data.length} 包` +
+    (lost ? ` · 丢 ${lost}` : '');
+}
+
+/* ============================== 直方图 ============================== */
+function drawHist() {
+  const c = $('histCanvas');
+  const { ctx, w, h } = fitCanvas(c);
+  ctx.clearRect(0, 0, w, h);
+  const M = MODES[S.mode];
+  const lats = S.samples.filter(d => d.ok).map(d => d.rtt).sort((a, b) => a - b);
+
+  if (lats.length < 3) {
+    ctx.fillStyle = 'rgba(90,112,137,.9)';
+    ctx.font = '11.5px "IBM Plex Mono",monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('成功样本 ≥ 3 后显示分布', w / 2, h / 2);
+    $('histMeta').textContent = '—';
+    return;
+  }
+
+  const L = 12, R = 12, T = 16, B = 20;
+  const pw = w - L - R, ph = h - T - B;
+  const lo = lats[0], hi = niceCeil(lats[lats.length - 1] * 1.02);
+  const NB = 16;
+  const bins = new Array(NB).fill(0);
+  lats.forEach(v => {
+    let bi = Math.floor(((v - lo) / (hi - lo)) * NB);
+    if (bi >= NB) bi = NB - 1;
+    if (bi < 0) bi = 0;
+    bins[bi]++;
+  });
+  const maxC = Math.max(...bins);
+
+  for (let i = 0; i < NB; i++) {
+    if (!bins[i]) continue;
+    const bw = pw / NB;
+    const bh = (bins[i] / maxC) * ph;
+    const x = L + i * bw, y = T + ph - bh;
+    const g = ctx.createLinearGradient(0, y, 0, T + ph);
+    g.addColorStop(0, M.colorDim + '.85)');
+    g.addColorStop(1, M.colorDim + '.18)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x + 1.5, y, bw - 3, bh);
+    ctx.fillStyle = M.color;
+    ctx.fillRect(x + 1.5, y, bw - 3, 1.5);
+  }
+
+  /* 基线 */
+  ctx.strokeStyle = 'rgba(120,160,210,.18)';
+  ctx.beginPath(); ctx.moveTo(L, T + ph + .5); ctx.lineTo(w - R, T + ph + .5); ctx.stroke();
+
+  /* P50 / P95 */
+  const q = (p) => lats[Math.min(lats.length - 1, Math.ceil(p * lats.length) - 1)];
+  const marks = [['P50', q(.5), 'rgba(139,163,191,.8)'], ['P95', q(.95), 'rgba(255,180,84,.85)']];
+  ctx.font = '10px "IBM Plex Mono",monospace';
+  marks.forEach(([name, v, col]) => {
+    const x = L + ((v - lo) / (hi - lo)) * pw;
+    ctx.save();
+    ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = col;
+    ctx.beginPath(); ctx.moveTo(x, T - 4); ctx.lineTo(x, T + ph); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = col;
+    ctx.textAlign = x > w - 60 ? 'right' : 'left';
+    ctx.fillText(`${name} ${fmtMs(v)}`, x > w - 60 ? x - 4 : x + 4, T - 6);
+  });
+
+  ctx.fillStyle = 'rgba(90,112,137,.9)';
+  ctx.textAlign = 'left'; ctx.fillText(fmtMs(lo) + ' ms', L, h - 6);
+  ctx.textAlign = 'right'; ctx.fillText(fmtMs(hi) + ' ms', w - R, h - 6);
+
+  $('histMeta').textContent = `n=${lats.length} · ${fmtMs(lo)}–${fmtMs(hi)} ms`;
+}
+
+/* ============================== 统计与仪表 ============================== */
+function computeStats() {
+  const oks = S.samples.filter(d => d.ok).map(d => d.rtt);
+  const total = S.samples.length;
+  const n = oks.length;
+  const st = {
+    total, n, lossPct: total ? ((total - n) / total) * 100 : 0,
+    avg: null, min: null, max: null, jitter: null, p95: null, score: 0, label: null,
+  };
+  if (!n) return st;
+  st.min = Math.min(...oks); st.max = Math.max(...oks);
+  st.avg = oks.reduce((a, v) => a + v, 0) / n;
+  const sorted = [...oks].sort((a, b) => a - b);
+  st.p95 = sorted[Math.min(n - 1, Math.ceil(.95 * n) - 1)];
+  let jsum = 0, jn = 0, prev = null;
+  for (const s of S.samples) {
+    if (!s.ok) { prev = null; continue; }
+    if (prev != null) { jsum += Math.abs(s.rtt - prev); jn++; }
+    prev = s.rtt;
+  }
+  st.jitter = jn ? jsum / jn : null;
+
+  /* 评分:实测延迟相对该距离预期基准的比值 / 丢包 / 抖动(跨洋 200ms 不会被误判为差) */
+  const exp = (S.expect && S.expect.ms) || 80;
+  const ratio = st.avg != null ? st.avg / exp : null;
+  let score = 100;
+  if (ratio != null && ratio > 1.25) score -= Math.min(50, (ratio - 1.25) * 30);
+  score -= Math.min(40, st.lossPct * 1.6);
+  if (st.jitter != null) {
+    const allow = Math.max(3, exp * 0.15);
+    if (st.jitter > allow) score -= Math.min(15, (st.jitter - allow) * 0.5);
+  }
+  st.ratio = ratio;
+  st.score = Math.max(0, Math.round(score));
+  st.label = st.score >= 85 ? '优秀' : st.score >= 70 ? '良好' : st.score >= 50 ? '一般' : '较差';
+  return st;
+}
+
+function gaugeColor(score) {
+  return score >= 85 ? '#3ddc97' : score >= 70 ? '#ffc26b' : score >= 50 ? '#ff9757' : '#ff6b6b';
+}
+
+function renderStats() {
+  const st = computeStats();
+  const lastOk = [...S.samples].reverse().find(d => d.ok);
+  $('curLat').textContent = lastOk ? fmtMs(lastOk.rtt) : (S.samples.length ? '✕' : '—');
+  $('curUnit').textContent = lastOk ? 'ms' : '';
+  $('stAvg').textContent = st.avg != null ? fmtMs(st.avg) : '—';
+  $('stMin').textContent = st.min != null ? fmtMs(st.min) : '—';
+  $('stMax').textContent = st.max != null ? fmtMs(st.max) : '—';
+  $('stJit').textContent = st.jitter != null ? fmtMs(st.jitter) : '—';
+  $('stP95').textContent = st.p95 != null ? fmtMs(st.p95) : '—';
+  const lossEl = $('stLoss');
+  if (st.total) {
+    const shown = Math.round(st.lossPct * 10) / 10;
+    lossEl.textContent = shown + '%';
+    lossEl.className = 'v ' + (st.lossPct >= 5 ? 'loss-bad' : st.lossPct === 0 ? 'loss-ok' : '');
+  } else {
+    lossEl.textContent = '—'; lossEl.className = 'v';
+  }
+
+  const C = 2 * Math.PI * 50;
+  const arc = $('gaugeArc');
+  arc.style.strokeDasharray = String(C);
+  arc.style.strokeDashoffset = String(C * (1 - st.score / 100));
+  const col = st.total ? gaugeColor(st.score) : '#182637';
+  arc.setAttribute('stroke', col);
+  $('gaugeScore').textContent = st.total ? st.score : '—';
+  $('gaugeScore').style.color = st.total ? col : 'var(--ink-faint)';
+  $('gaugeLabel').textContent = st.total ? '链路质量 · ' + st.label : '链路质量';
+  $('gaugeCount').textContent = st.total ? `${st.n}/${st.total} 包回应` : '';
+
+  let desc;
+  if (!st.total) {
+    desc = '开始测试后,综合延迟、丢包与抖动给出评分。';
+  } else if (st.label === '较差') {
+    desc = '延迟显著超出该距离的正常范围,或存在丢包与剧烈抖动。';
+  } else if (st.ratio != null && st.ratio > 2) {
+    desc = '延迟明显高于该距离的预期,可能存在绕行或拥塞。';
+  } else if (st.lossPct >= 5) {
+    desc = '延迟在该距离属正常范围,但丢包会影响实际体验。';
+  } else if (st.ratio != null && st.ratio <= 1.35 && st.avg >= 100) {
+    desc = '跨域线路正常水平:高延迟主要来自物理距离。';
+  } else if (st.label === '优秀') {
+    desc = '延迟低且稳定,链路状况很好。';
+  } else {
+    desc = '链路可用,延迟或抖动略有波动。';
+  }
+  $('gaugeDesc').textContent = desc;
+
+  $('logCount').textContent = `${S.samples.length} 包`;
+  if (window.__scopeTint) window.__scopeTint(st);
+}
+
+/* ============================== 日志 ============================== */
+function renderLogRow(s) {
+  const empty = $('logEmpty');
+  if (empty) empty.remove();
+  const tb = $('logBody');
+  const tr = document.createElement('tr');
+  const errTxt = ERROR_TEXT[s.error] || s.error || '失败';
+  if (s.ok) {
+    tr.innerHTML = `<td>#${s.seq}</td><td>${fmtTime(s.ts)}</td><td class="lat">${fmtMs(s.rtt)} ms</td><td>${s.ttl ?? '—'}</td><td class="st">ok</td>`;
+  } else {
+    tr.className = 'fail';
+    tr.innerHTML = `<td>#${s.seq}</td><td>${fmtTime(s.ts)}</td><td class="lat">—</td><td>—</td><td class="st">${errTxt}</td>`;
+  }
+  tb.insertBefore(tr, tb.firstChild);
+  while (tb.children.length > MAX_LOG) tb.removeChild(tb.lastChild);
+}
+
+/* ============================== 探测流程 ============================== */
+function readSettings() {
+  S.host = $('targetInput').value.trim();
+  S.port = Math.min(65535, Math.max(1, parseInt($('portInput').value, 10) || 443));
+  S.interval = parseInt($('intervalSel').value, 10);
+  S.timeout = parseInt($('timeoutSel').value, 10);
+  S.duration = parseInt($('durationSel').value, 10) || 0;
+}
+
+function validateHost() {
+  const input = $('targetInput');
+  if (!HOST_RE.test(S.host)) {
+    input.classList.add('invalid');
+    setTimeout(() => input.classList.remove('invalid'), 1200);
+    toast('目标格式不合法:请输入 IP 或域名', true);
+    return false;
+  }
+  return true;
+}
+
+function ensureSession() {
+  if (S.session && S.session.host === S.host && S.session.mode === S.mode &&
+      (S.mode === 'icmp' || S.session.port === S.port)) return;
+  S.samples = []; S.seq = 0;
+  S.session = { host: S.host, mode: S.mode, port: S.port, ts0: Date.now() };
+  $('logBody').innerHTML = '';
+  const M = MODES[S.mode];
+  $('curTarget').textContent = `${S.host} · ${M.label}${S.mode === 'tcp' ? ':' + S.port : ''}`;
+  loadGeo();
+}
+
+/* ---------- 归属地加载与评估基准 ---------- */
+function computeExpect() {
+  const on = $('geoToggle').checked;
+  const t = S.geo.target, me = S.geo.self;
+  if (!on) {
+    S.expect = { basis: 'generic', ms: 80, km: null, note: '通用基准(识别已关闭)' };
+  } else if (t && t.private) {
+    S.expect = { basis: 'local', ms: 4, km: 0, note: '局域网基准' };
+  } else if (t && t.ok && me && me.ok && t.lat != null && me.lat != null) {
+    const km = haversineKm(me.lat, me.lon, t.lat, t.lon);
+    const ms = Math.max(5, Math.round((km / 100) * 1.5));
+    S.expect = { basis: 'geo', ms, km: Math.round(km), note: `物理距离基准 · 预期往返 ≈${ms} ms` };
+  } else if (t && t.ok) {
+    S.expect = regionalExpect(t);
+  } else {
+    S.expect = { basis: 'generic', ms: 80, km: null, note: '通用基准(未识别归属地)' };
+  }
+  renderGeoLine();
+}
+
+function renderGeoLine() {
+  const el = $('geoLine'), basisEl = $('gaugeBasis');
+  if (!S.session) { el.textContent = ''; basisEl.textContent = ''; return; }
+  const on = $('geoToggle').checked;
+  const t = S.geo.target, e = S.expect;
+  let txt = '';
+  if (!on) {
+    txt = '归属地识别已关闭 · 按通用基准评估延迟';
+  } else if (!t) {
+    txt = '归属地识别中…';
+  } else if (t.private) {
+    txt = '本机 / 局域网目标 · 正常延迟应在数毫秒内';
+  } else if (t.ok) {
+    const loc = [t.country, t.city || t.region].filter(Boolean).join(' · ');
+    const dist = e.basis === 'geo' && e.km != null ? ` · 距离 ≈${e.km.toLocaleString()} km` : '';
+    const expTxt = e.basis === 'geo' || e.basis === 'region' ? ` · 该距离正常往返 ≈${e.ms} ms` : '';
+    txt = `${flagOf(t.countryCode)} ${loc}${dist}${expTxt}`;
+  } else {
+    txt = '归属地未识别 · 按通用基准评估延迟';
+  }
+  el.textContent = txt;
+  basisEl.textContent = e ? `评估基准:${e.note}` : '';
+}
+
+async function loadGeo() {
+  const host = S.host;
+  S.geo.target = null;
+  renderGeoLine();
+  if (!$('geoToggle').checked) { computeExpect(); renderStats(); return; }
+  if (!(S.geo.self && S.geo.self.ok)) {
+    fetch('/api/geo').then(r => r.json())
+      .then(j => { if (j && j.ok) S.geo.self = j; })
+      .catch(() => {})
+      .then(() => { if (S.session && S.session.host === host) { computeExpect(); renderStats(); } });
+  }
+  let target = null;
+  try {
+    const r = await fetch('/api/geo?host=' + encodeURIComponent(host));
+    target = await r.json();
+  } catch (e) { target = { ok: false }; }
+  if (S.session && S.session.host === host) {
+    S.geo.target = target;
+    computeExpect();
+    renderStats();
+  }
+}
+
+async function doPing() {
+  const qs = new URLSearchParams({ host: S.host, mode: S.mode, port: String(S.port), timeout: String(S.timeout) });
+  const res = await fetch('/api/ping?' + qs.toString());
+  let j;
+  try { j = await res.json(); } catch (e) { throw new Error('响应解析失败'); }
+  if (!res.ok) throw new Error(j && j.error ? j.error : 'HTTP ' + res.status);
+  return j;
+}
+
+function pushResult(j) {
+  const s = {
+    seq: ++S.seq, ts: j.ts || Date.now(), ok: !!j.ok, rtt: j.rtt,
+    ttl: j.ttl, error: j.error, mode: S.mode,
+  };
+  S.samples.push(s);
+  if (S.samples.length > MAX_SAMPLES) S.samples.shift();
+  S.lastArrive = performance.now();
+  S.needRedraw = true;
+  renderLogRow(s);
+  renderStats();
+}
+
+async function fireOnce() {
+  if (S.inFlight) return;
+  S.inFlight = true;
+  const t0 = performance.now();
+  try {
+    const j = await doPing();
+    S.errToastShown = false;
+    pushResult(j);
+  } catch (e) {
+    if (!S.running || !S.errToastShown) {
+      toast('探测失败:' + (e.message || e), true);
+      S.errToastShown = true;
+    }
+    pushResult({ ok: false, error: 'network' });
+    if (!S.running) setStatus('error');
+  }
+  S.inFlight = false;
+  if (S.running) {
+    const elapsed = performance.now() - t0;
+    S.timer = setTimeout(fireOnce, Math.max(60, S.interval - elapsed));
+  }
+}
+
+function setStatus(kind) {
+  const pill = $('statusPill'), txt = $('statusText');
+  pill.className = 'pill' + (kind === 'running' ? ' running' : kind === 'error' ? ' error' : '');
+  txt.textContent = kind === 'running' ? '运行中' : kind === 'error' ? '出错' : '就绪';
+  document.body.classList.toggle('live', kind === 'running');
+}
+
+/* ---------- 控件事件 ---------- */
+$('modeIcmp').addEventListener('click', () => setMode('icmp'));
+$('modeTcp').addEventListener('click', () => setMode('tcp'));
+function setMode(m) {
+  S.mode = m;
+  $('modeIcmp').classList.toggle('active', m === 'icmp');
+  $('modeTcp').classList.toggle('active', m === 'tcp');
+  $('portField').classList.toggle('on', m === 'tcp');
+  document.body.classList.toggle('tcp', m === 'tcp');
+  const lg = $('scopeLegend').firstElementChild;
+  lg.innerHTML = `<span class="sw" style="background:${MODES[m].color}"></span>${MODES[m].label}往返延迟`;
+  if (S.samples.length) { S.needRedraw = true; }
+}
+
+$('chips').addEventListener('click', (e) => {
+  const b = e.target.closest('.chip');
+  if (!b) return;
+  $('targetInput').value = b.dataset.host;
+});
+
+$('geoToggle').addEventListener('change', () => {
+  if (!S.session) { renderGeoLine(); return; }
+  const needFetch = $('geoToggle').checked &&
+    !(S.geo.target && (S.geo.target.ok || S.geo.target.private));
+  if (needFetch) loadGeo();
+  else { computeExpect(); renderStats(); }
+});
+
+$('btnSingle').addEventListener('click', async () => {
+  readSettings();
+  if (!validateHost()) return;
+  ensureSession();
+  $('btnSingle').disabled = true;
+  await fireOnce();
+  $('btnSingle').disabled = false;
+});
+
+$('btnRun').addEventListener('click', () => {
+  if (S.running) return stopRun();
+  readSettings();
+  if (!validateHost()) return;
+  ensureSession();
+  S.running = true;
+  S.deadline = S.duration > 0 ? Date.now() + S.duration * 1000 : 0;
+  setStatus('running');
+  updateCountdown();
+  S.tickTimer = setInterval(updateCountdown, 500);
+  $('btnRunText').textContent = '停止';
+  $('btnRun').classList.add('btn-stop');
+  $('btnSingle').disabled = true;
+  fireOnce();
+});
+function fmtRemain(ms) {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  if (s >= 60) {
+    const m = Math.floor(s / 60), r = s % 60;
+    return `${m}:${String(r).padStart(2, '0')}`;
+  }
+  return `${s}s`;
+}
+function updateCountdown() {
+  if (!S.running) return;
+  if (!S.deadline) return;
+  const remain = S.deadline - Date.now();
+  if (remain <= 0) { finishRun(); return; }
+  $('statusText').textContent = `运行中 · 剩余 ${fmtRemain(remain)}`;
+}
+function finishRun() {
+  stopRun();
+  const st = computeStats();
+  if (S.session) {
+    toast(`测试完成(${Math.round(S.duration / 60)} 分钟):平均 ${st.avg != null ? fmtMs(st.avg) + ' ms' : '—'} · 丢包 ${Math.round(st.lossPct * 10) / 10}% · 评分 ${st.score}`);
+  }
+}
+function stopRun() {
+  S.running = false;
+  clearTimeout(S.timer);
+  clearInterval(S.tickTimer);
+  setStatus('idle');
+  $('btnRunText').textContent = '开始连续测试';
+  $('btnRun').classList.remove('btn-stop');
+  $('btnSingle').disabled = false;
+}
+
+$('btnClear').addEventListener('click', () => {
+  if (S.running) stopRun();
+  S.samples = []; S.seq = 0; S.session = null;
+  S.geo.target = null;
+  S.expect = { basis: 'generic', ms: 80, km: null, note: '通用基准' };
+  $('logBody').innerHTML = '';
+  const sc = $('logScroll');
+  if (!$('logEmpty')) {
+    const d = document.createElement('div');
+    d.className = 'log-empty'; d.id = 'logEmpty';
+    d.textContent = '尚无数据。输入目标后点击「单次测试」。';
+    sc.querySelector('table').insertAdjacentElement('afterend', d);
+  }
+  $('curTarget').textContent = '未设定目标';
+  $('scopeMeta').textContent = '等待触发';
+  S.needRedraw = true;
+  renderStats();
+});
+
+function download(name, mime, content) {
+  const url = URL.createObjectURL(new Blob([content], { type: mime }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+$('btnCsv').addEventListener('click', () => {
+  if (!S.samples.length) return toast('没有可导出的数据', true);
+  const rows = [['seq', 'time_iso', 'host', 'mode', 'ok', 'rtt_ms', 'ttl', 'error']];
+  for (const s of S.samples) {
+    rows.push([s.seq, new Date(s.ts).toISOString(), S.session ? S.session.host : '',
+      s.mode, s.ok ? 1 : 0, s.ok ? s.rtt : '', s.ttl ?? '', s.error || '']);
+  }
+  const csv = '\uFEFF' + rows.map(r => r.join(',')).join('\r\n');
+  download(`netscope-${S.session ? S.session.host : 'data'}-${Date.now()}.csv`, 'text/csv', csv);
+  toast('CSV 已导出');
+});
+$('btnJson').addEventListener('click', () => {
+  if (!S.samples.length) return toast('没有可导出的数据', true);
+  const st = computeStats();
+  const payload = {
+    session: S.session, stats: st,
+    samples: S.samples.map(s => ({ ...s })),
+    exportedAt: new Date().toISOString(),
+  };
+  download(`netscope-${S.session ? S.session.host : 'data'}-${Date.now()}.json`, 'application/json', JSON.stringify(payload, null, 2));
+  toast('JSON 已导出');
+});
+
+$('targetInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('btnSingle').click();
+});
+
+/* ============================== 使用说明弹窗 ============================== */
+const helpMask = $('helpMask');
+function openHelp() {
+  helpMask.hidden = false; document.body.style.overflow = 'hidden';
+  const body = helpMask.querySelector('.help-body');
+  body.scrollTop = 0; body.classList.remove('scrolled-end');
+  updateHelpScrollHint();
+}
+function closeHelp() { helpMask.hidden = true; document.body.style.overflow = ''; }
+function updateHelpScrollHint() {
+  const body = helpMask.querySelector('.help-body');
+  const atEnd = body.scrollTop + body.clientHeight >= body.scrollHeight - 4;
+  body.classList.toggle('scrolled-end', atEnd);
+}
+$('btnHelp').addEventListener('click', openHelp);
+$('btnHelpClose').addEventListener('click', closeHelp);
+helpMask.addEventListener('click', (e) => { if (e.target === helpMask) closeHelp(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !helpMask.hidden) closeHelp(); });
+helpMask.querySelector('.help-body').addEventListener('scroll', updateHelpScrollHint);
+
+/* ============================== 环境信息 ============================== */
+fetch('/api/info').then(r => r.json()).then(j => {
+  const plat = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' }[j.platform] || j.platform;
+  $('envInfo').textContent = `${plat} ${j.arch} · Node ${j.node} · 本机直连`;
+}).catch(() => { $('envInfo').textContent = '本地服务未连接'; });
+
+/* ============================== 本机网络环境 ============================== */
+let NET = null;
+function esc(v) {
+  return String(v).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+function kvRow(k, v, hl) {
+  return `<div class="kv"><span class="k">${esc(k)}</span><span class="v${hl ? ' hl' : ''}">${v == null || v === '' ? '—' : v}</span></div>`;
+}
+function fmtUptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d} 天 ${h} 小时` : h > 0 ? `${h} 小时 ${m} 分` : `${m} 分钟`;
+}
+function renderNetInfo() {
+  const exitBox = $('netExit'), localBox = $('netLocal');
+  if (!NET || !NET.ok) {
+    exitBox.innerHTML = kvRow('状态', '无法获取(本地服务未响应)');
+    localBox.innerHTML = kvRow('状态', '无法获取');
+    return;
+  }
+  const e = NET.exit, l = NET.local;
+  if (e) {
+    const loc = [e.country, e.region, e.city].filter(Boolean).join(' · ');
+    const tags = [];
+    if (e.proxy === true) tags.push('<span class="tag">代理出口</span>');
+    if (e.hosting === true) tags.push('<span class="tag">数据中心</span>');
+    if (e.mobile === true) tags.push('<span class="tag">移动网络</span>');
+    if (!tags.length && e.proxy != null) tags.push('<span class="tag no">住宅/普通出口</span>');
+    exitBox.innerHTML =
+      kvRow('出口 IP', `<b>${esc(e.ip)}</b>`, true) +
+      kvRow('运营商 ISP', esc(e.isp)) +
+      kvRow('ASN', e.as ? esc(e.as) + (e.asname ? ` · ${esc(e.asname)}` : '') : null) +
+      kvRow('组织', esc(e.org)) +
+      kvRow('位置', esc(loc)) +
+      kvRow('坐标', e.lat != null ? `${e.lat}, ${e.lon}` : null) +
+      kvRow('时区', esc(e.timezone)) +
+      kvRow('反向解析', esc(e.reverse)) +
+      (tags.length ? kvRow('出口类型', tags.join(' ')) : '');
+  } else {
+    exitBox.innerHTML = kvRow('状态', '出口信息未能识别(离线或接口不可达)');
+  }
+  const plat = { darwin: 'macOS', win32: 'Windows', linux: 'Linux' }[l.platform] || l.platform;
+  const ifs = (l.interfaces || []).map(i => `${esc(i.name)}: ${esc(i.address)}`).join('<br>') || '—';
+  const activeVal = l.activeIp
+    ? `<b>${esc(l.activeIp)}</b>${l.activeIf ? ` <span class="tag">${esc(l.activeIf)}</span>` : ''}`
+    : (l.interfaces || []).length ? '未识别(无默认路由)' : '未联网';
+  const routeRow = l.routeVirtual && l.routeIf
+    ? kvRow('默认路由', `经 ${esc(l.routeIf)} <span class="tag">代理/VPN 隧道</span>`)
+    : '';
+  localBox.innerHTML =
+    kvRow('当前网络 IP', activeVal, !!l.activeIp) +
+    routeRow +
+    kvRow('操作系统', `${plat} ${esc(l.release)} · ${esc(l.arch)}`) +
+    kvRow('主机名', esc(l.hostname)) +
+    kvRow('运行环境', `Node ${esc(l.node)}`) +
+    kvRow('内网 IPv4 · 全部', ifs) +
+    kvRow('系统运行', fmtUptime(l.uptime));
+}
+async function loadNetInfo() {
+  $('netExit').innerHTML = kvRow('状态', '识别中…');
+  $('netLocal').innerHTML = kvRow('状态', '读取中…');
+  try {
+    const r = await fetch('/api/network');
+    NET = await r.json();
+  } catch (e) { NET = null; }
+  renderNetInfo();
+}
+$('btnNetRefresh').addEventListener('click', () => { loadNetInfo(); toast('本机网络信息已刷新'); });
+$('btnNetExport').addEventListener('click', () => {
+  if (!NET || !NET.ok) return toast('暂无可导出的网络信息', true);
+  download(`netscope-network-${Date.now()}.json`, 'application/json', JSON.stringify(NET, null, 2));
+  toast('网络信息 JSON 已导出');
+});
+
+/* ============================== 带宽测试 ============================== */
+const SPD = { running: false, ctrl: null, samples: [], phase: '' };
+
+function drawSpeedChart() {
+  const c = $('speedCanvas');
+  const { ctx, w, h } = fitCanvas(c);
+  ctx.clearRect(0, 0, w, h);
+  const L = 8, R = 44, T = 8, B = 8;
+  const pw = w - L - R, ph = h - T - B;
+  const S_ = SPD.samples;
+
+  /* 底网格 */
+  ctx.font = '9.5px "IBM Plex Mono",monospace';
+  for (let i = 0; i <= 3; i++) {
+    const y = T + (ph * i) / 3;
+    ctx.strokeStyle = 'rgba(120,160,210,.07)';
+    ctx.beginPath(); ctx.moveTo(L, Math.round(y) + .5); ctx.lineTo(w - R, Math.round(y) + .5); ctx.stroke();
+  }
+
+  if (!S_.length) {
+    ctx.fillStyle = 'rgba(90,112,137,.8)';
+    ctx.textAlign = 'center';
+    ctx.fillText('测速实时曲线', w / 2, h / 2);
+    return;
+  }
+
+  const maxV = niceCeil(Math.max(10, ...S_.map(s => s.mbps)) * 1.15);
+  const n = S_.length;
+  const X = (i) => L + (n === 1 ? pw / 2 : (pw * i) / (n - 1));
+  const Y = (v) => T + ph * (1 - Math.min(v, maxV) / maxV);
+
+  /* 区块连线下:下载琥珀、上传青 */
+  let seg = [];
+  const flush = () => {
+    if (seg.length < 2) { seg = []; return; }
+    ctx.strokeStyle = seg[0].dir === 'down' ? '#ffb454' : '#6cd9f7';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    seg.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+    ctx.stroke();
+    seg = [];
+  };
+  let lastDir = null;
+  S_.forEach((s, i) => {
+    const p = { x: X(i), y: Y(s.mbps) };
+    if (s.dir !== lastDir) { flush(); lastDir = s.dir; }
+    seg.push({ ...p, dir: s.dir });
+  });
+  flush();
+
+  /* Y 轴刻度 */
+  ctx.fillStyle = 'rgba(90,112,137,.9)';
+  ctx.textAlign = 'left';
+  for (let i = 0; i <= 3; i++) {
+    const v = (maxV * (3 - i)) / 3;
+    ctx.fillText(v >= 100 ? Math.round(v) : (Math.round(v * 10) / 10), w - R + 6, T + (ph * i) / 3 + 3);
+  }
+}
+
+function fmtMbps(v) {
+  if (v == null) return '—';
+  return v >= 100 ? Math.round(v).toString() : (Math.round(v * 10) / 10).toString();
+}
+
+async function startSpeed() {
+  if (SPD.running) { SPD.ctrl && SPD.ctrl.abort(); return; }
+  SPD.running = true;
+  SPD.samples = [];
+  SPD.ctrl = new AbortController();
+  const btn = $('btnSpeed');
+  btn.textContent = '停止';
+  $('spDl').textContent = '—'; $('spUl').textContent = '—'; $('spPing').textContent = '—';
+  $('speedBarFill').style.width = '0%';
+  drawSpeedChart();
+
+  const phaseEl = $('speedPhase'), nowEl = $('speedNow'), valEl = $('speedVal');
+  const setPhase = (html) => { phaseEl.innerHTML = html; };
+  let gotData = false;
+
+  try {
+    const resp = await fetch('/api/speedtest', { signal: SPD.ctrl.signal });
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    /* 阶段 → 进度条估算 */
+    const phasePct = { start: 4, latency: 15, download: 55, upload: 92, done: 100 };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const raw = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        if (!raw.startsWith('data: ')) continue;
+        let ev; try { ev = JSON.parse(raw.slice(6)); } catch (e) { continue; }
+        gotData = true;
+        if (ev.type === 'phase') {
+          SPD.phase = ev.phase;
+          setPhase(`<span class="sp">▸</span> ${ev.label}…`);
+          if (phasePct[ev.phase] != null) $('speedBarFill').style.width = phasePct[ev.phase] + '%';
+          if (ev.phase === 'download') { nowEl.className = 'speed-now down'; valEl.textContent = '0'; }
+          if (ev.phase === 'upload') { nowEl.className = 'speed-now up'; valEl.textContent = '0'; }
+        } else if (ev.type === 'ping') {
+          $('spPing').textContent = fmtMs(ev.ping.avg) + ' ms';
+        } else if (ev.type === 'progress') {
+          valEl.textContent = fmtMbps(ev.mbps);
+          SPD.samples.push({ mbps: ev.mbps, dir: ev.dir });
+          if (SPD.samples.length > 400) SPD.samples.shift();
+          drawSpeedChart();
+        } else if (ev.type === 'done') {
+          if (ev.dl) { $('spDl').textContent = fmtMbps(ev.dl.mbps); $('speedBarFill').style.width = '100%'; }
+          if (ev.ul) $('spUl').textContent = fmtMbps(ev.ul.mbps);
+          if (ev.ping) $('spPing').textContent = fmtMs(ev.ping.avg) + ' ms';
+          const both = ev.dl && ev.ul;
+          nowEl.className = 'speed-now' + (ev.ul && !ev.dl ? ' up' : ' down');
+          valEl.textContent = fmtMbps(ev.dl ? ev.dl.mbps : (ev.ul ? ev.ul.mbps : 0));
+          setPhase(both
+            ? `完成 ↓ ${fmtMbps(ev.dl.mbps)} Mbps · ↑ ${fmtMbps(ev.ul.mbps)} Mbps`
+            : ev.dl ? '完成(已取消上传)' : '完成');
+          if (window.__scopeTint) window.__scopeTint(null);
+        } else if (ev.type === 'error') {
+          setPhase('测速失败:' + (ev.error || '未知错误'));
+          toast('测速失败:' + (ev.error || '未知错误'), true);
+        }
+      }
+    }
+    if (!gotData) setPhase('测速失败:无响应');
+  } catch (e) {
+    if (e.name === 'AbortError') setPhase('已停止');
+    else { setPhase('测速失败:' + (e.message || e)); toast('测速失败:' + (e.message || e), true); }
+  } finally {
+    SPD.running = false;
+    SPD.ctrl = null;
+    btn.textContent = '开始测速';
+  }
+}
+$('btnSpeed').addEventListener('click', startSpeed);
+
+/* ============================== 渲染循环 ============================== */
+window.addEventListener('resize', () => { S.needRedraw = true; });
+(function renderLoop() {
+  const pulsing = !RM && S.samples.length && performance.now() - S.lastArrive < 850;
+  if (S.needRedraw || pulsing) {
+    drawScope();
+    drawHist();
+    S.needRedraw = false;
+  }
+  requestAnimationFrame(renderLoop);
+})();
+drawScope(); drawHist(); renderStats();
+loadNetInfo();
+drawSpeedChart();
+
+/* ============================== Three.js 信号海背景 ============================== */
+(function initBG() {
+  const canvas = $('bg3d');
+  if (!window.THREE || !canvas) { if (canvas) canvas.style.display = 'none'; return; }
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'low-power' });
+  } catch (e) { canvas.style.display = 'none'; return; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x070b12, 0.026);
+  const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 300);
+  camera.position.set(0, 11, 34);
+  camera.lookAt(0, 0, -14);
+
+  const COLS = 150, ROWS = 80, GAP = 1.15, N = COLS * ROWS;
+  const pos = new Float32Array(N * 3);
+  const col = new Float32Array(N * 3);
+  const base = new Float32Array(N);
+  let k = 0;
+  for (let j = 0; j < ROWS; j++) {
+    for (let i = 0; i < COLS; i++) {
+      const x = (i - COLS / 2) * GAP;
+      const z = (j - ROWS / 2) * GAP - 4;
+      pos[k * 3] = x; pos[k * 3 + 1] = 0; pos[k * 3 + 2] = z;
+      const dx = x / (COLS * GAP / 2), dz = z / (ROWS * GAP / 2);
+      const r = Math.sqrt(dx * dx * 1.6 + dz * dz);
+      base[k] = Math.max(0.06, (1 - r) * (0.5 + 0.5 * Math.abs(Math.sin(i * 12.9898 + j * 78.233))));
+      k++;
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
+  const mat = new THREE.PointsMaterial({
+    size: 0.17, vertexColors: true, transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  scene.add(new THREE.Points(geo, mat));
+
+  /* 质量色调:空闲冷蓝 → 优(青绿)/中(琥珀)/差(红) */
+  let tint = { r: 0.30, g: 0.42, b: 0.55 };
+  let tintTarget = { ...tint };
+  window.__scopeTint = (st) => {
+    if (!st || !st.total) { tintTarget = { r: 0.30, g: 0.42, b: 0.55 }; return; }
+    if (st.score >= 85) tintTarget = { r: 0.28, g: 0.66, b: 0.52 };
+    else if (st.score >= 70) tintTarget = { r: 0.78, g: 0.56, b: 0.28 };
+    else if (st.score >= 50) tintTarget = { r: 0.85, g: 0.45, b: 0.25 };
+    else tintTarget = { r: 0.80, g: 0.28, b: 0.26 };
+  };
+
+  let mx = 0, my = 0;
+  window.addEventListener('pointermove', (e) => {
+    mx = (e.clientX / window.innerWidth) * 2 - 1;
+    my = (e.clientY / window.innerHeight) * 2 - 1;
+  }, { passive: true });
+
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const pAttr = geo.attributes.position, cAttr = geo.attributes.color;
+  function frame(tSec) {
+    tint.r += (tintTarget.r - tint.r) * 0.02;
+    tint.g += (tintTarget.g - tint.g) * 0.02;
+    tint.b += (tintTarget.b - tint.b) * 0.02;
+    for (let n = 0; n < N; n++) {
+      const x = pos[n * 3], z = pos[n * 3 + 2];
+      pos[n * 3 + 1] =
+        1.6 * Math.sin(x * 0.18 + tSec * 0.6) +
+        1.1 * Math.cos(z * 0.14 + tSec * 0.45) +
+        0.7 * Math.sin((x + z) * 0.09 - tSec * 0.3);
+      const shimmer = 0.9 + 0.1 * Math.sin(tSec * 2 + n * 0.37);
+      const e = base[n] * shimmer;
+      col[n * 3] = tint.r * e;
+      col[n * 3 + 1] = tint.g * e;
+      col[n * 3 + 2] = tint.b * e;
+    }
+    pAttr.needsUpdate = true;
+    cAttr.needsUpdate = true;
+    camera.position.x += (mx * 5 - camera.position.x) * 0.02;
+    camera.position.y += (11 - my * 2.5 - camera.position.y) * 0.02;
+    camera.lookAt(0, 0, -14);
+    renderer.render(scene, camera);
+    if (!RM) requestAnimationFrame((ts) => frame(ts / 1000));
+  }
+  frame(0);
+})();
+</script>
+</body>
+</html>
